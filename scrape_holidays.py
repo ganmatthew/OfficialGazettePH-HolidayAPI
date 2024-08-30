@@ -27,49 +27,57 @@ def parse_holiday_type(holiday_type: str) -> str:
         case _:
             return ''
 
-def get_holiday_data(year: int = datetime.now().year, get_holiday_name: bool = False, log_time: bool = True) -> list:
+def get_holiday_data(years: list = [datetime.now().year], get_holiday_name: bool = False, log_time: bool = True) -> dict:
     """
     Scrapes holidays from the Official Gazette. If `year` is not provided, the current year is used as a default value. Takes approximately 10-20 seconds per request.
-    """
-    start_time = time.time()
+    """  
 
-    url = f'https://www.officialgazette.gov.ph/nationwide-holidays/{year}/'
+    holidays = {}
+    
+    try:       
+        driver = Driver(uc=True) # Use 'uc=True' to bypass Cloudflare
 
-    try:
-        driver = Driver(uc=True) # Use `uc=True` to bypass Cloudflare
-        driver.get(url)
-        page_source = driver.page_source
-        title = driver.get_title().lower()
+        for year in years:
+            url = f'https://www.officialgazette.gov.ph/nationwide-holidays/{year}/'
+
+            start_time = time.time()
+
+            driver.get(url)
+            title = driver.get_title().lower()
+
+            holidays_per_year = []
+
+            # Attempt to check if the page returns a 404 code
+            if not "page not found" in title:
+                soup = BeautifulSoup(driver.page_source, 'html.parser')
+
+                tables = soup.select("table")
+                for i, table in enumerate(tables):
+                    holiday_type = "Regular Holidays" if i == 0 else "Special (Non-Working) Holidays"
+                    
+                    rows = table.find_all('tr')[1:]
+                    for row in rows:
+                        cols = row.find_all('td')
+                        date = cols[1].get_text(strip=True)
+
+                        if get_holiday_name:
+                            event = cols[0].get_text(strip=True)
+                            holidays_per_year.append({'event': event, 'date': parse_date_format(date, year)})
+
+                        holidays_per_year.append({'date': parse_date_format(date, year), 'holiday_type': parse_holiday_type(holiday_type)})
+                            
+            
+            holidays[str(year)] = holidays_per_year
+
+            response_time = time.time() - start_time
+
+            if log_time:
+                print(f"{len(holidays_per_year)} holiday(s) found in {year}. Request processed in {round(response_time, 2)} second(s)")
+
         driver.quit()
-
-        holidays = []
-
-        # Attempt to check if the page returns a 404 code
-        if not "page not found" in title:
-            soup = BeautifulSoup(page_source, 'html.parser')
-
-            tables = soup.find_all("table")
-            for i, table in enumerate(tables):
-                holiday_type = "Regular Holidays" if i == 0 else "Special (Non-Working) Holidays"
-                rows = table.find_all('tr')
-                for row in rows[1:]:
-                    cols = row.find_all('td')
-                    event = cols[0].get_text(strip=True)
-                    date = cols[1].get_text(strip=True)
-                    formatted_date = parse_date_format(date, year)
-                    formatted_type = parse_holiday_type(holiday_type)
-                    if get_holiday_name:
-                        holidays.append({'event': event, 'date': formatted_date, 'holiday_type': formatted_type})
-                    else:
-                        holidays.append({'date': formatted_date, 'holiday_type': formatted_type})
 
     except Exception as e:
         return f'Error processing HTML content: {e}' 
-
-    response_time = time.time() - start_time
-
-    if log_time:
-        print(f"{len(holidays)} holiday(s) found in {year}. Request processed in {round(response_time, 2)} second(s)")
 
     return holidays
 
@@ -86,12 +94,8 @@ if __name__ == '__main__':
         # Generate the year range in the data to determine which years' holidays should be obtained
         years = data_df['date'].dt.year.unique().tolist()
 
-        # Create a dict for the holiday data that will be retrieved
-        holidays = {}
-
         # Obtain the holiday data for each year and store them in a dict
-        for year in years:
-            holidays[str(year)] = get_holiday_data(year)
+        holidays = get_holiday_data(years)
 
         # Match the holiday data to the list of dicts containing the dates in the input data
         holidays_list = [item for sublist in holidays.values() for item in sublist]
